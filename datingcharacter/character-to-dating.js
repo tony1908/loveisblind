@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors'); // Added cors to enable CORS for any request
 const axios = require('axios'); // Added axios for making API calls
 // Removed the openai module import lines below
 // const openaiModule = require("openai");
@@ -12,7 +11,6 @@ const app = express();
 
 // Configure express to use JSON
 app.use(express.json());
-app.use(cors()); // Accept all requests via CORS
 
 // Helper function to read a character file
 function readCharacterFile(characterName) {
@@ -173,21 +171,70 @@ Expanded ${fieldName}:`;
   }
 }
 
-// Updated API Endpoint: Return hardcoded response for faster processing
-app.post('/api/convert-to-dating/:characterName', (req, res) => {
-  res.json({
-    success: true,
-    message: "Character converted and expanded successfully (hardcoded)",
-    outputPath: "hardcoded-output-path",
-    character: {
-      name: "Hardcoded Character",
-      topics: ["romance", "dating", "relationships"],
-      system: "Hardcoded system prompt for dating character",
-      style: { all: ["example style guideline"] },
-      messageExamples: [],
-      knowledge: []
+// Updated API Endpoint: Removed openai configuration and adjusted expandField calls
+app.post('/api/convert-to-dating/:characterName', async (req, res) => {
+  try {
+    const { characterName } = req.params;
+    
+    // Read the original character
+    const character = readCharacterFile(characterName);
+    
+    // Convert to dating version
+    const datingCharacter = convertToDatingCharacter(character);
+    
+    // Extract additional dating details from the request body
+    const { perfectDate, funniestJoke, funniestMeme, funniestTiktok } = req.body;
+    if (perfectDate || funniestJoke || funniestMeme || funniestTiktok) {
+      // Build additional details text
+      const additionalInfo = [];
+      if (perfectDate) additionalInfo.push(`Perfect Date: ${perfectDate}`);
+      if (funniestJoke) additionalInfo.push(`Funniest Joke: ${funniestJoke}`);
+      if (funniestMeme) additionalInfo.push(`Funniest Meme: ${funniestMeme}`);
+      if (funniestTiktok) additionalInfo.push(`Funniest TikTok: ${funniestTiktok}`);
+      
+      const additionalDetailsText = additionalInfo.join('\n');
+      
+      // Append additional details to the system prompt for better context
+      datingCharacter.system += `\n\nAdditional dating profile details:\n${additionalDetailsText}`;
     }
-  });
+    
+    // Expand the character's fields if the OpenAI API key is set
+    if (process.env.OPENAI_API_KEY) {
+      // Use a subset of postExamples as context if available
+      const postExamplesContext = (datingCharacter.postExamples && Array.isArray(datingCharacter.postExamples))
+            ? datingCharacter.postExamples.slice(0, 5)
+            : [];
+      
+      // Expand 'system'
+      datingCharacter.system = await expandField("system", datingCharacter.system, postExamplesContext);
+      
+      // Expand 'bio'
+      const bioText = Array.isArray(datingCharacter.bio) ? datingCharacter.bio.join(" ") : datingCharacter.bio;
+      datingCharacter.bio = [await expandField("bio", bioText, postExamplesContext)];
+      
+      // Expand 'lore'
+      const loreText = Array.isArray(datingCharacter.lore) ? datingCharacter.lore.join(" ") : datingCharacter.lore;
+      datingCharacter.lore = [await expandField("lore", loreText, postExamplesContext)];
+    } else {
+      console.warn("OpenAI API key not set; skipping expansion of character fields.");
+    }
+    
+    // Write the updated character to a file
+    const outputPath = writeCharacterFile(datingCharacter, characterName);
+    
+    res.json({
+      success: true,
+      message: "Character converted and expanded successfully",
+      outputPath,
+      character: datingCharacter
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 // Get list of available characters
